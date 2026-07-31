@@ -1,244 +1,162 @@
-# Test Task: Mini User and Project Management API
+# Mini User and Project Management API
 
-## Objective
+A small REST API over users and the projects they own, built with FastAPI, Pydantic v2,
+SQLAlchemy 2.0 and PostgreSQL.
 
-Implement a small REST API using:
+## Running the application
 
-- FastAPI
-- Pydantic
-- SQLModel or SQLAlchemy
-- A relational database
-
-No user interface is required.
-
-The complete application must start locally with a single command:
-
-```
+```bash
 docker-compose up
 ```
 
-No additional setup or manual commands should be necessary.
+That is the only command required. It builds the API image, starts PostgreSQL, waits for
+the database to become healthy, creates the schema, and serves the API on port 8000.
+No `.env` file, migration step or manual database initialisation is needed.
 
-## Domain Model
+- API: <http://localhost:8000>
+- Interactive documentation (Swagger UI): <http://localhost:8000/docs>
+- Alternative documentation (ReDoc): <http://localhost:8000/redoc>
+- OpenAPI schema: <http://localhost:8000/openapi.json>
+- Health check: <http://localhost:8000/health>
 
-Implement the following entities:
+## Endpoints
 
-### User
+| Method | Path | Success | Notes |
+| --- | --- | --- | --- |
+| POST | `/users` | 201 | 409 if the email is already registered |
+| GET | `/users` | 200 | Paginated via `limit` (1–100, default 20) and `offset` |
+| GET | `/users/{user_id}` | 200 | 404 if absent |
+| DELETE | `/users/{user_id}` | 204 | 404 if absent; cascades to the user's projects |
+| POST | `/projects` | 201 | 404 if the owner does not exist |
+| GET | `/projects/{project_id}` | 200 | 404 if absent |
+| GET | `/users/{user_id}/projects` | 200 | 404 if the user does not exist |
+| GET | `/health` | 200 | Liveness probe |
 
-A user should include at least:
+Validation failures return 422, produced by Pydantic without any custom handling.
 
-- ID
-- Name
-- Email
+`GET /users` returns a pagination envelope rather than a bare array, so a client can tell
+whether more rows exist:
 
-The email address must be unique.
-
-### Project
-
-A project should include at least:
-
-- ID
-- Name
-- Optional description
-- Owner reference
-
-### Relationship
-
-A single User can own multiple Projects.
-
-User 1 → Many Projects
-
-Each Project must belong to one existing User.
-
-## API Requirements
-
-### Users
-
-**Create a User**
-`POST /users`
-
-Requirements:
-
-- Create a new user.
-- Validate the request payload.
-- Ensure that the email address is unique.
-- Return an appropriate error when the email already exists.
-
-**Retrieve a User**
-`GET /users/{id}`
-
-Requirements:
-
-- Retrieve a user by ID.
-- Return `404 Not Found` when the user does not exist.
-
-**List Users**
-`GET /users`
-
-Requirements:
-
-- Return a paginated list of users.
-- Support the following query parameters:
-  - `limit`
-  - `offset`
-
-Example:
-
-```
-GET /users?limit=20&offset=0
+```json
+{ "items": [ ... ], "total": 42, "limit": 20, "offset": 0 }
 ```
 
-**Delete a User**
-`DELETE /users/{id}`
+`GET /users/{user_id}/projects` returns a plain array. The specification asks for all of a
+user's projects there, so it is deliberately not paginated.
 
-Requirements:
+## Architectural decisions
 
-- Delete a user by ID.
-- Return `404 Not Found` when the user does not exist.
-- Correctly handle projects associated with the deleted user.
-- The selected behavior, such as cascading project deletion, should be clearly implemented and documented.
+**SQLAlchemy 2.0 with separate Pydantic schemas, not SQLModel.** SQLModel merges the ORM
+model and the serialisation model into one class, which is convenient but blurs two
+genuinely different responsibilities: what is stored and what is exposed. FastAPI already
+depends on Pydantic, so pairing it with plain SQLAlchemy costs nothing and keeps the
+request/response contract independent of the table definition.
 
-### Projects
+**A flat module layout rather than nested packages.** The brief suggests `models/`,
+`schemas/` and `services/` directories. With two entities and seven endpoints, those would
+be packages holding one short module each, and a service layer would consist of
+pass-through functions that add a file to open without adding a decision to make.
+Separation of concerns here is by responsibility rather than by directory depth: HTTP
+handling lives in `app/routers/`, persistence in `app/models.py`, the wire contract in
+`app/schemas.py`, and infrastructure in `app/database.py`. The layout is worth revisiting
+at roughly the point a third entity or any non-trivial business rule appears.
 
-**Create a Project**
-`POST /projects`
+**Routers grouped by URL prefix.** `GET /users/{user_id}/projects` lives in
+`routers/users.py` because that router owns the `/users` prefix; splitting a prefix across
+two files to satisfy a conceptual grouping costs more than it returns. The endpoint carries
+the `projects` OpenAPI tag, so `/docs` still groups it with the other project operations.
 
-Requirements:
+**Email uniqueness is enforced by the database.** `POST /users` attempts the insert and
+converts an `IntegrityError` on the named `uq_users_email` constraint into a 409. Querying
+for an existing row first would leave a window between the check and the insert in which a
+concurrent request could claim the same address; the constraint is the only guarantee that
+holds under concurrency.
 
-- Create a project for an existing user.
-- Validate that the specified owner exists.
-- Return an appropriate error when the user does not exist.
+**Sessions are injected, not imported.** `get_db` yields a request-scoped session and
+closes it in a `finally` block. Routes depend on the `DbSession` alias, which lets the test
+suite substitute a session with a single `dependency_overrides` entry.
 
-**Retrieve a Project**
-`GET /projects/{id}`
+**Schema creation over migrations.** `Base.metadata.create_all()` runs in the FastAPI
+lifespan handler, which satisfies the requirement that the schema appear with no manual
+step. Alembic is the right tool once a deployed schema has to evolve without data loss;
+for a greenfield service that is recreated on every start, it would be ceremony.
 
-Requirements:
+**Synchronous SQLAlchemy.** Every endpoint here is a small indexed query. Async drivers
+pay off under high concurrency on slow queries, and in exchange they complicate sessions,
+testing and stack traces. Synchronous code running in FastAPI's thread pool is the simpler
+correct choice at this size.
 
-- Retrieve a project by ID.
-- Return `404 Not Found` when the project does not exist.
+**Dependencies are deliberately minimal:** `fastapi`, `uvicorn`, `sqlalchemy`,
+`psycopg`, and `email-validator` (which backs Pydantic's `EmailStr`). No settings library,
+dependency-injection framework, or pagination package — FastAPI's own dependency system
+covers all three needs.
 
-**List a User's Projects**
-`GET /users/{id}/projects`
+## User deletion behaviour
 
-Requirements:
+**Deleting a user deletes all of their projects.** A project cannot exist without an owner,
+because `owner_id` is `NOT NULL`; orphaning is therefore not an available option, and soft
+deletion would add a state that every read path would then have to filter. Cascade is the
+behaviour that matches the domain.
 
-- Return all projects owned by the specified user.
-- Return `404 Not Found` when the user does not exist.
+It is implemented at both levels:
 
-## Docker and Local Execution
+- `ForeignKey("users.id", ondelete="CASCADE")` makes PostgreSQL perform the delete, so it
+  is correct even for rows removed outside the API.
+- `relationship(cascade="all, delete-orphan", passive_deletes=True)` tells SQLAlchemy to
+  defer to the database. Without `passive_deletes=True`, SQLAlchemy would load every child
+  row and try to null out its foreign key, which the `NOT NULL` column would reject.
 
-The project must run using only:
+`DELETE /users/{user_id}` returns `204 No Content` on success and `404 Not Found` if the
+user does not exist. There is a test asserting that a deleted user's projects are gone.
 
+## Running the tests
+
+The suite runs against the real PostgreSQL service, not SQLite:
+
+```bash
+docker-compose up -d
+docker-compose run --rm api pytest
 ```
-docker-compose up
-```
 
-The Docker Compose configuration must:
+The choice of database matters here. SQLite does not enforce foreign keys unless
+`PRAGMA foreign_keys=ON` is set, so the cascade-delete test would pass without proving
+anything. Running against PostgreSQL means the tests exercise the same constraint
+behaviour as production.
 
-- Start the API service.
-- Start the database service.
-- Expose the API at `http://localhost:8000`.
-- Automatically create or apply the database schema.
-- Configure all required service dependencies and environment variables.
-- Require no manual database initialization.
+Coverage includes creation and retrieval for both entities, the 409 duplicate-email path,
+422 validation failures, 404s on every lookup, pagination windows and boundary values,
+204 on delete, and the cascade from a deleted user to their projects.
 
-The generated FastAPI documentation should be available at:
-
-```
-http://localhost:8000/docs
-```
-
-## Expected Project Structure
-
-A clear separation of responsibilities is expected. For example:
+## Project structure
 
 ```
 app/
-├── main.py
-├── api/
-│   ├── users.py
-│   └── projects.py
-├── models/
-│   ├── user.py
-│   └── project.py
-├── schemas/
-│   ├── user.py
-│   └── project.py
-├── services/
-│   ├── users.py
-│   └── projects.py
-├── database.py
-└── dependencies.py
+├── main.py            # app instance, lifespan schema creation, health check, router wiring
+├── database.py        # engine, session factory, declarative base
+├── dependencies.py    # get_db, user lookup helper, pagination parameters
+├── models.py          # SQLAlchemy models: User, Project
+├── schemas.py         # Pydantic request/response models
+└── routers/
+    ├── users.py       # everything under /users
+    └── projects.py    # everything under /projects
 tests/
+├── conftest.py        # engine, client and truncation fixtures
 ├── test_users.py
 └── test_projects.py
 Dockerfile
 docker-compose.yml
+pyproject.toml         # ruff and pytest configuration
 requirements.txt
-README.md
 ```
 
-This structure is only a recommendation. Alternative structures are acceptable when they remain clean and easy to understand.
+## Notes
 
-## Error Handling
+Linting and formatting are configured through ruff in `pyproject.toml`:
 
-Use appropriate HTTP status codes, including:
-
-- `201 Created` for successful resource creation
-- `200 OK` for successful retrieval
-- `204 No Content` for successful deletion
-- `404 Not Found` when a resource does not exist
-- `409 Conflict` when attempting to create a user with an existing email
-- `422 Unprocessable Entity` for request validation errors
-
-## Evaluation Criteria
-
-### Core Requirements
-
-The following will be evaluated as must-have requirements:
-
-- Correct use of FastAPI.
-- Clean request and response models using Pydantic.
-- Correct ORM models and relationships.
-- Email uniqueness enforcement.
-- Proper validation and error handling.
-- Working pagination.
-- Correct handling of user deletion and related projects.
-- Docker Compose working out of the box.
-- Automatic database schema creation.
-- Readable, maintainable code.
-- Clear separation of concerns.
-
-### Optional Bonus Points
-
-Additional credit may be given for:
-
-- Dependency injection for database sessions.
-- Async SQLAlchemy or SQLModel usage.
-- Automated tests using pytest.
-- OpenAPI tags, endpoint descriptions, and response documentation.
-- Database migrations using Alembic.
-- Health-check endpoint.
-- Type annotations throughout the codebase.
-- Linting or formatting configuration.
-
-## Deliverables
-
-Please provide:
-
-- Complete source code.
-- Dockerfile.
-- docker-compose.yml.
-- Dependency configuration such as `requirements.txt` or `pyproject.toml`.
-- A short README.md containing:
-  - How to start the application.
-  - API documentation location.
-  - Main architectural decisions.
-  - User-deletion behavior for associated projects.
-  - Instructions for running tests, when tests are included.
-
-The reviewer should be able to clone the repository and start the entire application using:
-
+```bash
+ruff check .
+ruff format .
 ```
-docker-compose up
-```
+
+Dependencies are declared with lower bounds for readability. A production service would pin
+exact versions in a lock file.
