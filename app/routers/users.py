@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.dependencies import get_user_or_404
 from app.models import Project, User
 from app.schemas import ProjectRead, UserCreate, UserRead
 
@@ -15,20 +16,18 @@ router = APIRouter(
 )
 
 
-def get_user_or_404(db: Session, user_id: int) -> User:
-    user = db.get(User, user_id)
-
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
-    return user
-
-
-@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a user",
+    responses={409: {"description": "A user with this email already exists."}},
+)
 def create_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
+    """Create a user.
+
+    Emails are normalised to lowercase and must be unique across all users.
+    """
     email = payload.email.strip().lower()
 
     # Friendly path: report the conflict without relying on a database error.
@@ -57,22 +56,39 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     return user
 
 
-@router.get("", response_model=list[UserRead])
+@router.get(
+    "",
+    response_model=list[UserRead],
+    summary="List users",
+)
 def list_users(
     db: Session = Depends(get_db),
-    limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100, description="Maximum rows to return."),
+    offset: int = Query(default=0, ge=0, description="Rows to skip."),
 ) -> Sequence[User]:
+    """Return a page of users, ordered by id so paging is stable."""
     return db.scalars(select(User).order_by(User.id).offset(offset).limit(limit)).all()
 
 
-@router.get("/{user_id}", response_model=UserRead)
+@router.get(
+    "/{user_id}",
+    response_model=UserRead,
+    summary="Retrieve a user",
+    responses={404: {"description": "User not found."}},
+)
 def get_user(user_id: int, db: Session = Depends(get_db)) -> User:
+    """Retrieve a single user by id."""
     return get_user_or_404(db, user_id)
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a user",
+    responses={404: {"description": "User not found."}},
+)
 def delete_user(user_id: int, db: Session = Depends(get_db)) -> Response:
+    """Delete a user and, by database cascade, every project they own."""
     user = get_user_or_404(db, user_id)
 
     # Projects are removed by the ON DELETE CASCADE on projects.owner_id.
@@ -81,10 +97,19 @@ def delete_user(user_id: int, db: Session = Depends(get_db)) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/{user_id}/projects", response_model=list[ProjectRead])
+@router.get(
+    "/{user_id}/projects",
+    response_model=list[ProjectRead],
+    summary="List a user's projects",
+    responses={404: {"description": "User not found."}},
+)
 def list_user_projects(user_id: int, db: Session = Depends(get_db)) -> Sequence[Project]:
-    # Checked explicitly so a missing user returns 404 instead of an empty
-    # list, which would be indistinguishable from a user with no projects.
+    """Return every project owned by the user.
+
+    The user is looked up first so that a missing user returns 404 rather than
+    an empty list, which would be indistinguishable from a user with no
+    projects.
+    """
     get_user_or_404(db, user_id)
 
     return db.scalars(
