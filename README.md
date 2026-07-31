@@ -78,8 +78,16 @@ suite substitute a session with a single `dependency_overrides` entry.
 
 **Schema creation over migrations.** `Base.metadata.create_all()` runs in the FastAPI
 lifespan handler, which satisfies the requirement that the schema appear with no manual
-step. Alembic is the right tool once a deployed schema has to evolve without data loss;
-for a greenfield service that is recreated on every start, it would be ceremony.
+step. The models are imported in `main.py` before it runs, so SQLAlchemy knows about the
+tables.
+
+This approach is appropriate here because the schema is small, `docker-compose up` has to
+work without manual commands, and migrations are explicitly optional for the assignment.
+It is **not** what a production system should do. `create_all()` creates missing tables but
+never alters existing ones, so any later change to a column, constraint or index would be
+silently ignored against a database that already has data. A deployed service should use a
+migration tool such as Alembic, where every schema change is an explicit, reviewable,
+reversible step.
 
 **Synchronous SQLAlchemy.** Every endpoint here is a small indexed query. Async drivers
 pay off under high concurrency on slow queries, and in exchange they complicate sessions,
