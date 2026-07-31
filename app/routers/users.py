@@ -15,6 +15,18 @@ router = APIRouter(
 )
 
 
+def get_user_or_404(db: Session, user_id: int) -> User:
+    user = db.get(User, user_id)
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    return user
+
+
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def create_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     email = payload.email.strip().lower()
@@ -56,23 +68,12 @@ def list_users(
 
 @router.get("/{user_id}", response_model=UserRead)
 def get_user(user_id: int, db: Session = Depends(get_db)) -> User:
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with id {user_id} does not exist.",
-        )
-    return user
+    return get_user_or_404(db, user_id)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(user_id: int, db: Session = Depends(get_db)) -> Response:
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with id {user_id} does not exist.",
-        )
+    user = get_user_or_404(db, user_id)
 
     # Projects are removed by the ON DELETE CASCADE on projects.owner_id.
     db.delete(user)
@@ -84,11 +85,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db)) -> Response:
 def list_user_projects(user_id: int, db: Session = Depends(get_db)) -> Sequence[Project]:
     # Checked explicitly so a missing user returns 404 instead of an empty
     # list, which would be indistinguishable from a user with no projects.
-    if db.get(User, user_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with id {user_id} does not exist.",
-        )
+    get_user_or_404(db, user_id)
 
     return db.scalars(
         select(Project).where(Project.owner_id == user_id).order_by(Project.id)

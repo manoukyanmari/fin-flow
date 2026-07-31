@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Project, User
+from app.models import Project
+from app.routers.users import get_user_or_404
 from app.schemas import ProjectCreate, ProjectRead
 
 router = APIRouter(
@@ -13,12 +14,7 @@ router = APIRouter(
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Project:
-    owner = db.get(User, payload.owner_id)
-    if owner is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with id {payload.owner_id} does not exist.",
-        )
+    get_user_or_404(db, payload.owner_id)
 
     project = Project(
         name=payload.name,
@@ -34,9 +30,11 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
 @router.get("/{project_id}", response_model=ProjectRead)
 def get_project(project_id: int, db: Session = Depends(get_db)) -> Project:
     project = db.get(Project, project_id)
+
     if project is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project with id {project_id} does not exist.",
+            detail="Project not found",
         )
+
     return project
