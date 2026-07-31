@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.database import Base, engine
 from app import models  # noqa: F401  -- registers the tables before create_all()
+from app.routers import projects, users
 
 
 @asynccontextmanager
@@ -17,6 +18,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.include_router(users.router)
+app.include_router(projects.router)
 
 
 @app.get("/health", tags=["Health"])

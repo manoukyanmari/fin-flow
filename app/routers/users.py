@@ -6,10 +6,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
-from app.schemas import UserCreate, UserRead
+from app.models import Project, User
+from app.schemas import ProjectRead, UserCreate, UserRead
 
-router = APIRouter(prefix="/users", tags=["Users"])
+router = APIRouter(
+    prefix="/users",
+    tags=["Users"],
+)
 
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -75,3 +78,18 @@ def delete_user(user_id: int, db: Session = Depends(get_db)) -> Response:
     db.delete(user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{user_id}/projects", response_model=list[ProjectRead])
+def list_user_projects(user_id: int, db: Session = Depends(get_db)) -> Sequence[Project]:
+    # Checked explicitly so a missing user returns 404 instead of an empty
+    # list, which would be indistinguishable from a user with no projects.
+    if db.get(User, user_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {user_id} does not exist.",
+        )
+
+    return db.scalars(
+        select(Project).where(Project.owner_id == user_id).order_by(Project.id)
+    ).all()
