@@ -1,17 +1,15 @@
 # Mini User & Project Management API
 
-A small REST API over users and the projects they own. Built with FastAPI, Pydantic v2,
-SQLAlchemy 2.0 and PostgreSQL.
+A small REST API where users own projects. FastAPI, Pydantic v2, SQLAlchemy 2.0, PostgreSQL.
 
-## Requirements
+## What you need
 
-Docker Desktop, or Docker Engine with the Compose plugin. Nothing else is needed to run the
-API.
+Docker Desktop, or Docker Engine with the Compose plugin. Nothing else to run the API.
 
-Ports 8000 and 5433 must be free on the host. 8000 serves the API, 5433 exposes the database
-so the test suite can reach it.
+Ports 8000 and 5433 need to be free. 8000 serves the API, 5433 is where the database is
+exposed so the tests can reach it from outside Docker.
 
-Running the tests outside Docker additionally needs Python 3.11 or newer.
+If you want to run the tests, you'll also need Python 3.11 or newer.
 
 ## Running it
 
@@ -19,14 +17,14 @@ Running the tests outside Docker additionally needs Python 3.11 or newer.
 docker-compose up --build
 ```
 
-On installations that ship Compose v2 only, the same command is `docker compose up --build`.
+That's the whole setup. It starts Postgres, waits until it's actually accepting connections,
+creates the schema, and serves the API on port 8000. No `.env` to copy, no migration to run,
+no database to prepare first.
 
-That is the only command needed. It starts PostgreSQL, waits for it to report healthy,
-creates the schema and serves the API on port 8000. There is no `.env` file to copy, no
-migration step and no manual database setup.
+If your Docker ships Compose v2 only, use `docker compose up --build`. Same thing.
 
-The first build takes a few minutes while the base images download. Everything is ready once
-the database reports healthy and the logs show Uvicorn listening on `0.0.0.0:8000`.
+The first build takes a few minutes while the base images download. You'll know it's ready
+when the database reports healthy and Uvicorn says it's listening on `0.0.0.0:8000`.
 
 * API: <http://localhost:8000>
 * Swagger UI: <http://localhost:8000/docs>
@@ -34,11 +32,11 @@ the database reports healthy and the logs show Uvicorn listening on `0.0.0.0:800
 * OpenAPI schema: <http://localhost:8000/openapi.json>
 * Health check: <http://localhost:8000/health>
 
-The database is published on host port 5433 rather than 5432, so it will not collide with a
-PostgreSQL already running on the machine. Inside the compose network the API still reaches
-it on 5432, so this only matters for host-side access such as running the tests.
+Why 5433 and not the usual 5432? So it won't fight with a Postgres you might already have
+running. Inside the compose network the API still talks to it on 5432, so this only affects
+you if you're connecting from your own machine.
 
-To stop the stack and remove the database volume:
+Done with it:
 
 ```bash
 docker-compose down -v
@@ -57,15 +55,19 @@ docker-compose down -v
 | GET | `/projects/{project_id}` | 200 | 404 |
 | GET | `/health` | 200 | |
 
-`GET /users` is paginated with `limit` (1 to 100, default 20) and `offset` (default 0), and
-returns a plain JSON array. `GET /users/{user_id}/projects` returns every project the user
-owns and is not paginated, since the brief asks for all of them.
+`GET /users` takes `limit` (1 to 100, default 20) and `offset` (default 0) and gives you back
+a plain array. `GET /users/{user_id}/projects` returns everything that user owns and isn't
+paginated, because the brief asks for all of them.
 
-All 422 responses come from Pydantic. None of them needed custom handling.
+The 422s come from Pydantic. I didn't write any of that handling.
 
 ## Trying it out
 
-The database starts empty, so there are no preloaded users.
+`docker-compose up --build` is the only step you have to run. Everything below is optional:
+a quick sanity check, a script that inserts some rows, and a tour of every endpoint. Skip all
+of it and the API still works exactly the same.
+
+The database starts empty, so there's nobody in it until you create someone or run the seed.
 
 ### Quick check
 
@@ -74,16 +76,16 @@ curl localhost:8000/health                # {"status":"ok"}
 curl localhost:8000/users                 # []
 ```
 
-An empty array is the correct response before anything has been created.
+An empty array is the right answer here, not a sign something is wrong.
 
-### Optional: load sample data
+### Want some data to play with?
 
 ```bash
 docker-compose exec api python seed.py
 ```
 
-This inserts two users and two projects, so there is something to look at without typing
-anything first. It prints what it created:
+Not required, just saves you typing. It adds two users and two projects and tells you what it
+made:
 
 ```
 user 1: Anahit Sargsyan <anahit@example.com>
@@ -92,45 +94,43 @@ project 1: Billing Service (owner 1)
 project 2: Internal Dashboard (owner 1)
 ```
 
-Running it twice does nothing. It prints `Database already contains users. Nothing inserted.`
-and stops.
+Run it twice and nothing happens. It checks for existing users first and backs out with
+`Database already contains users. Nothing inserted.`
 
-The rows are temporary sample data for reviewing the API, standing in until there is real
-data. Nothing in the application reads them or depends on them, and deleting them, or the
-volume, changes nothing about how the service behaves. The seed produces exactly the state
-that steps 1, 2, 5 and 6 below would produce by hand, so you can seed and then start at step
-3.
+These rows are throwaway sample data standing in until there's anything real. No part of the
+application reads them, so delete them, or the whole volume, and nothing changes. The seed
+leaves you in exactly the state that steps 1, 2, 5 and 6 below would, so you can seed and
+jump straight to step 3.
 
-### Manual walkthrough
+### The full tour
 
-The sequence below covers every endpoint and every error case in a few minutes. Paste the
-bodies into Swagger UI at <http://localhost:8000/docs>, or use the curl equivalents.
+Every endpoint and every error, in a few minutes. Paste the bodies into Swagger at
+<http://localhost:8000/docs>, or use curl. On an empty database the ids come out exactly as
+written here.
 
-On a fresh database the ids come out as written here, since the sequences start at 1.
-
-1. `POST /users` with `{"name": "Anahit Sargsyan", "email": "anahit@example.com"}` returns 201 and
-   user id 1.
-2. `POST /users` with `{"name": "Narek Petrosyan", "email": "narek@example.com"}` returns 201
-   and user id 2.
-3. `POST /users` with `anahit@example.com` again returns 409.
-4. `POST /users` with `{"name": "Anahit", "email": "not-an-email"}` returns 422.
+1. `POST /users` with `{"name": "Anahit Sargsyan", "email": "anahit@example.com"}` gives you
+   201 and user 1.
+2. `POST /users` with `{"name": "Narek Petrosyan", "email": "narek@example.com"}` gives you
+   201 and user 2.
+3. `POST /users` with `anahit@example.com` again gives you 409.
+4. `POST /users` with `{"name": "Anahit", "email": "not-an-email"}` gives you 422.
 5. `POST /projects` with
-   `{"name": "Billing Service", "description": "A general purpose machine", "owner_id": 1}`
-   returns 201 and project id 1.
-6. `POST /projects` with `{"name": "Internal Dashboard", "owner_id": 1}` returns 201 and project id 2,
-   with `description` set to null.
-7. `POST /projects` with `{"name": "Orphan", "owner_id": 999}` returns 404, because the
-   owner does not exist.
-8. `GET /users?limit=1&offset=1` returns only Narek, which shows the pagination window
-   moving.
+   `{"name": "Billing Service", "description": "Invoicing and payment reconciliation", "owner_id": 1}`
+   gives you 201 and project 1.
+6. `POST /projects` with `{"name": "Internal Dashboard", "owner_id": 1}` gives you 201 and
+   project 2, with `description` set to null.
+7. `POST /projects` with `{"name": "Orphan", "owner_id": 999}` gives you 404. There's no such
+   owner.
+8. `GET /users?limit=1&offset=1` returns Narek only. That's the pagination window moving.
 9. `GET /users/1/projects` returns both of Anahit's projects.
-10. `GET /users/999/projects` returns 404 rather than an empty list.
-11. `DELETE /users/1` returns 204.
-12. `GET /projects/1` and `GET /projects/2` now return 404. Deleting Anahit removed her
-    projects through the database cascade.
-13. `GET /users/2` still returns Narek, and `GET /users` shows her alone.
+10. `GET /users/999/projects` gives you 404, not an empty list. That distinction is
+    deliberate, see below.
+11. `DELETE /users/1` gives you 204.
+12. `GET /projects/1` and `GET /projects/2` now give you 404. Deleting Anahit took her
+    projects with her.
+13. `GET /users/2` still returns Narek, and `GET /users` shows him on his own.
 
-The same walkthrough as curl, for the first few steps:
+The first few as curl:
 
 ```bash
 curl -X POST localhost:8000/users \
@@ -144,107 +144,115 @@ curl -X POST localhost:8000/projects \
 curl localhost:8000/users/1/projects
 ```
 
-## Architectural decisions
+## Decisions I made, and why
 
 ### SQLAlchemy with separate Pydantic schemas, not SQLModel
 
-SQLModel merges the ORM model and the API model into a single class. That saves a file, but
-it ties what is stored to what is exposed. FastAPI already depends on Pydantic, so using it
-next to plain SQLAlchemy costs nothing and keeps the two contracts independent of each
-other.
+SQLModel folds the table and the API model into one class. It saves a file, but it ties what
+you store to what you expose, and those change for different reasons. FastAPI already brings
+Pydantic along, so pairing it with plain SQLAlchemy costs nothing and keeps the two apart.
 
-### A flat module layout
+### A flat layout instead of the suggested packages
 
-Two entities and seven endpoints do not justify `models/`, `schemas/` and `services/`
-packages that each hold one short file. Separation of concerns here is by responsibility
-rather than by directory depth. HTTP handling lives in `app/routers/`, persistence in
-`models.py`, the wire contract in `schemas.py`, infrastructure in `database.py`, and the one
-shared helper in `dependencies.py`. I would revisit this once there is a third entity or a
-rule that counts as business logic.
+The brief suggests `models/`, `schemas/` and `services/` directories. With two entities and
+seven endpoints, those would be packages holding one short file each, and the service layer
+would be functions that pass their arguments straight to the ORM.
 
-### Uniqueness is enforced by the database
+So the separation here is by responsibility, not by folder depth. Routing lives in
+`app/routers/`, tables in `models.py`, the API contract in `schemas.py`, plumbing in
+`database.py`, and the single shared helper in `dependencies.py`. I'd revisit it the moment
+there's a third entity or a rule that's genuinely business logic.
 
-`POST /users` looks for an existing email first so the common case returns a clean 409. It
-then catches `IntegrityError` on the unique constraint and returns the same 409. The lookup
-on its own would be a race, since two concurrent requests can both pass it. The constraint
-is the real guarantee. The lookup only exists to produce a better message.
+### The database enforces email uniqueness, not the code
 
-### Sessions are injected
+`POST /users` looks for the address first so you get a clean 409 in the normal case. Then it
+catches `IntegrityError` on the constraint and returns the same 409.
 
-`get_db` yields a request-scoped session and closes it in a `finally` block. Routes depend on
-it through `Depends`, which also lets the test suite substitute its own session with one
-`dependency_overrides` entry.
+Both, because the lookup alone is a race. Two requests can pass it before either commits. The
+constraint is what actually guarantees anything; the lookup just makes the error nicer.
 
-### Schema creation runs in the FastAPI lifespan
+### Sessions come through dependency injection
 
-`Base.metadata.create_all()` runs at startup so that `docker-compose up` needs no follow-up
-command. This suits a task of this size. It is not what production should do.
-`create_all()` adds missing tables but never alters existing ones, so a later change to a
-column or a constraint would be silently ignored against a database that already holds data.
-A deployed service wants Alembic.
+`get_db` hands out a session per request and closes it in a `finally`. Routes take it via
+`Depends`, which is also what lets the tests swap in their own session with a single
+`dependency_overrides` line.
 
-### Synchronous SQLAlchemy
+### Schema created at startup, no Alembic
 
-Every query here is a small indexed lookup. Async pays off under high concurrency on slow
-queries, and in exchange it complicates sessions, fixtures and stack traces. Synchronous
-code in FastAPI's thread pool is the simpler correct choice at this size.
+`Base.metadata.create_all()` runs in the FastAPI lifespan, which is how `docker-compose up`
+manages without a follow-up command.
+
+Fine here. Wrong for production. `create_all()` will add a missing table but never alter an
+existing one, so any later change to a column or constraint gets silently ignored on a
+database that already has data in it. Real deployments want Alembic.
+
+### Synchronous, not async
+
+Every query in here is a small indexed lookup. Async earns its keep under heavy concurrency
+on slow queries, and charges you in awkward sessions, awkward fixtures and worse tracebacks.
+At this size that's a bad trade.
 
 ### Five dependencies
 
-`fastapi`, `uvicorn`, `sqlalchemy`, `psycopg` and `email-validator`. No settings library, no
-dependency-injection framework and no pagination package. FastAPI's own dependency system
-and `Query` cover all three needs.
+`fastapi`, `uvicorn`, `sqlalchemy`, `psycopg`, `email-validator`. No settings library, no DI
+framework, no pagination package. FastAPI's own `Depends` and `Query` cover all three.
 
-## User deletion
+## What happens when you delete a user
 
-Deleting a user deletes their projects.
+Their projects go too.
 
-`owner_id` is `NOT NULL`, so a project cannot outlive its owner. Orphaning is therefore not
-available as a behaviour, and soft deletion would introduce a state that every read path
-would then have to filter on. Cascade is what matches the domain.
+`owner_id` is `NOT NULL`, so a project can't outlive its owner. Orphaning isn't an option,
+and soft deletion would add a state that every read in the codebase then has to remember to
+filter out. Cascading is what the domain actually means.
 
-It is declared at both levels:
+It's declared twice, on purpose:
 
-* `ForeignKey("users.id", ondelete="CASCADE")` makes PostgreSQL perform the delete, so it
-  holds even for rows removed outside the API.
-* `relationship(cascade="all, delete-orphan", passive_deletes=True)` tells SQLAlchemy to
-  defer to the database. Without `passive_deletes=True` it would load every child row and
-  try to null out the foreign key, which the `NOT NULL` column rejects.
+* `ForeignKey("users.id", ondelete="CASCADE")` puts it in the database, so it holds even for
+  rows deleted outside the API.
+* `relationship(cascade="all, delete-orphan", passive_deletes=True)` tells SQLAlchemy to step
+  back and let it. Without `passive_deletes=True` SQLAlchemy loads every child row and tries
+  to null the foreign key, which a `NOT NULL` column rejects.
 
-`DELETE /users/{user_id}` returns 204 on success and 404 when the user does not exist.
+`DELETE /users/{user_id}` returns 204 when it works and 404 when the user isn't there.
 
 ## Tests
 
-Thirteen tests. Each one is here because something specific would break silently without it,
-rather than to cover every success path.
+Thirteen of them. Each one is here because something specific would break quietly without it,
+not to cover every happy path.
 
-* **User creation, and a duplicate email returning 409.** The second is the one that earns
-  its place: it proves uniqueness is actually enforced rather than assumed.
-* **Emails are stored lowercase.** `create_user` lowercases the address before saving. Remove
-  that line and every other test still passes, but the unique constraint compares bytes, so
-  `ANAHIT@Example.COM` and `anahit@example.com` would become two accounts for one person.
-  This test is what keeps uniqueness case insensitive.
-* **422 on an invalid email, a blank name, and a project with no owner.** These hold the
-  Pydantic constraints in place. Drop `min_length=1` and a user with an empty name would be
-  created without complaint. The third also separates two failures worth distinguishing: 422
-  means `owner_id` was missing, 404 means it was supplied but pointed at nobody.
-* **Pagination returns the correct window, in order.** The ordering assertion is deliberate.
-  `OFFSET` and `LIMIT` without an `ORDER BY` have no guaranteed row order in PostgreSQL, so
-  pages could repeat one row and skip another. Comparing an exact ordered list is what
-  catches that.
-* **Project creation, and creation against an owner who does not exist returning 404.**
-  Confirms ownership is validated before insert rather than left to the foreign key.
-* **Listing a user's projects, in three parts.** Only that user's projects come back, a
-  missing user returns 404, and a user who exists with nothing returns an empty list. The
-  three matter together rather than separately: with only the first two, an implementation
-  that returned 404 whenever the query found no rows would still pass, and a new user who had
-  simply not created anything would be told they do not exist.
-* **Deleting a user removes every project they own.** The failure this guards against is
-  quiet. Without `passive_deletes=True`, SQLAlchemy would load the child rows and try to null
-  a `NOT NULL` foreign key instead of letting the database cascade.
+**User creation, and a duplicate email returning 409.** The 409 is the one worth having. It
+proves uniqueness is enforced rather than hoped for.
 
-Between them every status code in the table above is asserted: 200, 201, 204, 404, 409 and
-422, and every endpoint has at least one test.
+**Emails stored lowercase.** `create_user` lowercases before saving. Take that line out and
+every other test still passes, but the unique constraint compares raw bytes, so
+`ANAHIT@Example.COM` and `anahit@example.com` become two accounts for one person. This test
+is the only thing keeping uniqueness case insensitive.
+
+**422 on a bad email, a blank name, and a project with no owner.** These pin the Pydantic
+constraints down. Drop `min_length=1` and you can create a user with no name at all. The
+third one also keeps two failures apart: 422 means `owner_id` wasn't sent, 404 means it was
+sent and pointed at nobody.
+
+**Pagination returns the right window, in order.** The ordering assertion is on purpose.
+`OFFSET` and `LIMIT` without an `ORDER BY` have no guaranteed row order in Postgres, so pages
+can repeat one row and skip another. Comparing an exact ordered list is what catches it.
+
+**Project creation, and a nonexistent owner returning 404.** Confirms the owner is checked
+before the insert rather than left to the foreign key to complain about.
+
+**Listing a user's projects, three tests.** Only that user's projects come back; a missing
+user gets 404; a real user with nothing gets an empty list. They only mean something
+together. With just the first two, an implementation that returned 404 whenever the query
+came back empty would still pass, and a brand new user would be told they don't exist.
+
+**Deleting a user removes their projects.** This is the one that fails quietly. Without
+`passive_deletes=True` SQLAlchemy would try to null a `NOT NULL` foreign key instead of
+letting the database cascade.
+
+Between them they assert every status code in the table above: 200, 201, 204, 404, 409, 422.
+Every endpoint has at least one test.
+
+Running them:
 
 ```bash
 docker-compose up -d db
@@ -253,19 +261,20 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-They run against the real PostgreSQL rather than SQLite. SQLite leaves foreign keys off by
-default, so the cascade test would pass without proving anything. `conftest.py` truncates
-between tests so each one starts from an empty database with predictable ids.
+They run against real Postgres, not SQLite. SQLite leaves foreign keys off unless you ask, so
+the cascade test would pass there whether or not the cascade worked, which is worse than not
+having it. `conftest.py` truncates between tests, so every test starts from an empty database
+with predictable ids.
 
-## Project structure
+## Where things live
 
 ```
 app/
-├── main.py            # app instance, lifespan schema creation, health check, router wiring
-├── database.py        # engine, session factory, declarative base, get_db
-├── dependencies.py    # get_user_or_404, shared by both routers
-├── models.py          # SQLAlchemy models: User, Project
-├── schemas.py         # Pydantic request and response models
+├── main.py            # app, lifespan schema creation, health check, routers wired in
+├── database.py        # engine, session factory, Base, get_db
+├── dependencies.py    # get_user_or_404, used by both routers
+├── models.py          # User and Project
+├── schemas.py         # request and response models
 └── routers/
     ├── users.py       # everything under /users
     └── projects.py    # everything under /projects
@@ -273,7 +282,7 @@ tests/
 ├── conftest.py
 ├── test_users.py
 └── test_projects.py
-seed.py                # optional sample rows, not used by the application
+seed.py                # optional sample rows, nothing depends on it
 Dockerfile
 docker-compose.yml
 requirements.txt
@@ -281,50 +290,43 @@ requirements-dev.txt
 ```
 
 `GET /users/{user_id}/projects` sits in the users router because that router owns the
-`/users` prefix. Splitting a prefix across two files to satisfy a conceptual grouping was not
+`/users` prefix. Splitting a prefix across two files to satisfy a conceptual grouping wasn't
 worth it.
 
 ## P.S. Notes on approach
 
-The brief suggests a layered structure with `services/`, `models/` and `schemas/` packages,
-and I chose not to follow it. With two entities and seven endpoints, a service layer would
-be functions that forward their arguments to the ORM and hand back the result. That is an
-extra file to open on the way to the code that does the work. I read "clear separation of
-concerns" as a statement about responsibilities rather than about directory depth, and I
-would rather defend a flat layout than ship layers that are there to look thorough. What
-would change my mind is a third entity, or the first rule that is actually business logic
-instead of persistence.
+The brief suggests a layered structure and I didn't follow it. With two entities and seven
+endpoints a service layer would be functions handing their arguments to the ORM and passing
+the result back, which is one more file to open on the way to the code that does the work. I
+took "clear separation of concerns" to be about responsibilities rather than folder depth,
+and I'd rather defend a flat layout than ship layers that exist to look thorough. What would
+change my mind is a third entity, or the first rule that's actually business logic.
 
-The same reasoning shaped the rest. SQLModel would have saved one file and coupled the table
-definition to the API contract. Alembic would have added a migration directory to a schema
-that is recreated on every start. Async SQLAlchemy would have made sessions, fixtures and
-tracebacks harder in exchange for concurrency this workload never sees. A settings library
-would have wrapped five lines of `os.environ`. All of those are reasonable tools that happen
-to be wrong at this size, and knowing which ones to leave out is the harder half of the job.
+The rest follows the same thinking. SQLModel saves a file and couples the table to the API
+contract. Alembic adds a migration directory to a schema that's rebuilt on every start. Async
+makes sessions, fixtures and tracebacks harder in return for concurrency this will never see.
+A settings library wraps five lines of `os.environ`. All good tools, all wrong here, and
+picking what to leave out is the harder half of the job.
 
-Where I did spend effort was the parts that fail quietly. The cascade is declared twice on
-purpose, once so the database enforces it and once so SQLAlchemy does not load every child
-row and try to null a `NOT NULL` column instead. Email uniqueness rests on the constraint
-rather than on the lookup before it, because that lookup is a race and the constraint is not.
-`GET /users` orders by `id` before applying `offset` and `limit`, because without a
-deterministic sort PostgreSQL is free to return the same row on two pages and skip another
-one entirely. That is the kind of bug that shows up once a week in production and never in a
-test. The suite runs on PostgreSQL for a similar reason: on SQLite the cascade test would
-pass whether or not the cascade worked.
+The effort went into the things that fail quietly instead. The cascade is declared twice so
+that neither the database nor the ORM is the single point of failure. Email uniqueness rests
+on the constraint, not the lookup in front of it, because the lookup is a race. `GET /users`
+sorts by id before paging, because without a deterministic sort Postgres can hand you the
+same row on two pages and skip another one entirely, which breaks once a week in production
+and never in a test. The suite runs on Postgres for the same reason: on SQLite the cascade
+test passes no matter what.
 
-If this were heading to production instead of review, the first three changes would be
-Alembic in place of `create_all()`, pinned versions in a lock file, and structured logging
-with request ids. After that, an index review once real query patterns exist, and
-authentication, which the brief did not ask for and which would change the shape of almost
-every endpoint here.
+If this were going to production instead of review, the first three changes would be Alembic
+instead of `create_all()`, pinned versions in a lock file, and structured logging with request
+ids. Then an index review once there are real query patterns, and authentication, which the
+brief didn't ask for and which would reshape nearly every endpoint here.
 
 ## A note on tooling
 
-I used Claude Opus while building this, mostly to pressure test the architectural decisions
-described above. Whether SQLModel was worth the coupling, how much structure two entities
-actually justify, where the delete cascade belongs, and which dependencies to leave out were
-all worked through that way before anything was written. It was also useful for the quieter
-failure modes, such as the missing `ORDER BY` on the paginated query and the interaction
-between `passive_deletes` and a `NOT NULL` foreign key.
+I used Claude Opus while building this, mostly to pressure test the decisions above. Whether
+SQLModel was worth the coupling, how much structure two entities really justify, where the
+cascade belongs, what to leave out of the dependency list. It was useful on the quiet failure
+modes too, the missing `ORDER BY` and the `passive_deletes` interaction with a `NOT NULL`
+column.
 
-The decisions here are mine and I am happy to walk through the reasoning behind any of them.
+The decisions are mine and I'm happy to talk through any of them.
