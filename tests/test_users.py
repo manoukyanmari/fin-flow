@@ -19,6 +19,22 @@ def test_duplicate_email_returns_409(client: TestClient) -> None:
     assert response.status_code == 409
 
 
+def test_email_is_stored_lowercase_and_stays_unique(client: TestClient) -> None:
+    # create_user lowercases the address before saving it. Take that line out
+    # and every other test here still passes, but Postgres compares the unique
+    # constraint byte for byte, so ANAHIT@Example.COM and anahit@example.com
+    # would become two separate accounts for the same person. This test is what
+    # keeps email uniqueness case insensitive.
+    created = client.post("/users", json={"name": "Anahit", "email": "ANAHIT@Example.COM"})
+
+    assert created.status_code == 201
+    assert created.json()["email"] == "anahit@example.com"
+
+    duplicate = client.post("/users", json={"name": "Someone else", "email": "anahit@example.com"})
+
+    assert duplicate.status_code == 409
+
+
 def test_invalid_email_returns_422(client: TestClient) -> None:
     response = client.post("/users", json={"name": "Anahit", "email": "not-an-email"})
 
