@@ -67,6 +67,15 @@ All 422 responses come from Pydantic. None of them needed custom handling.
 
 The database starts empty, so there are no preloaded users.
 
+### Quick check
+
+```bash
+curl localhost:8000/health                # {"status":"ok"}
+curl localhost:8000/users                 # []
+```
+
+An empty array is the correct response before anything has been created.
+
 ### Optional: load sample data
 
 ```bash

@@ -19,6 +19,18 @@ def test_duplicate_email_returns_409(client: TestClient) -> None:
     assert response.status_code == 409
 
 
+def test_invalid_email_returns_422(client: TestClient) -> None:
+    response = client.post("/users", json={"name": "Anahit", "email": "not-an-email"})
+
+    assert response.status_code == 422
+
+
+def test_blank_name_returns_422(client: TestClient) -> None:
+    response = client.post("/users", json={"name": "", "email": "valid@example.com"})
+
+    assert response.status_code == 422
+
+
 def test_list_users_pagination(client: TestClient) -> None:
     for index in range(5):
         client.post("/users", json={"name": f"User {index}", "email": f"u{index}@example.com"})

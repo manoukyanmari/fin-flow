@@ -20,3 +20,9 @@ def test_create_project_with_invalid_owner_returns_404(client: TestClient) -> No
     response = client.post("/projects", json={"name": "Orphan", "owner_id": 999999})
 
     assert response.status_code == 404
+
+
+def test_create_project_without_owner_returns_422(client: TestClient) -> None:
+    response = client.post("/projects", json={"name": "Nameless"})
+
+    assert response.status_code == 422
