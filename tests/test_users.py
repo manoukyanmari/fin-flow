@@ -52,3 +52,24 @@ def test_delete_user_cascades_projects(client: TestClient) -> None:
     assert client.get(f"/users/{user['id']}").status_code == 404
     assert client.get(f"/projects/{first['id']}").status_code == 404
     assert client.get(f"/projects/{second['id']}").status_code == 404
+
+
+def test_list_user_projects_returns_only_that_users_projects(client: TestClient) -> None:
+    first = client.post("/users", json={"name": "Anahit", "email": "anahit@example.com"}).json()
+    second = client.post("/users", json={"name": "Narek", "email": "narek@example.com"}).json()
+    client.post("/projects", json={"name": "Billing Service", "owner_id": first["id"]})
+    client.post("/projects", json={"name": "Internal Dashboard", "owner_id": first["id"]})
+    client.post("/projects", json={"name": "Data Import", "owner_id": second["id"]})
+
+    response = client.get(f"/users/{first['id']}/projects")
+
+    assert response.status_code == 200
+    projects = response.json()
+    assert [project["name"] for project in projects] == ["Billing Service", "Internal Dashboard"]
+    assert all(project["owner_id"] == first["id"] for project in projects)
+
+
+def test_list_projects_for_missing_user_returns_404(client: TestClient) -> None:
+    response = client.get("/users/999999/projects")
+
+    assert response.status_code == 404
