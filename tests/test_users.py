@@ -2,19 +2,19 @@ from fastapi.testclient import TestClient
 
 
 def test_create_user(client: TestClient) -> None:
-    response = client.post("/users", json={"name": "Ada", "email": "ada@example.com"})
+    response = client.post("/users", json={"name": "Anahit", "email": "anahit@example.com"})
 
     assert response.status_code == 201
     body = response.json()
     assert body["id"] > 0
-    assert body["name"] == "Ada"
-    assert body["email"] == "ada@example.com"
+    assert body["name"] == "Anahit"
+    assert body["email"] == "anahit@example.com"
 
 
 def test_duplicate_email_returns_409(client: TestClient) -> None:
-    client.post("/users", json={"name": "Ada", "email": "ada@example.com"})
+    client.post("/users", json={"name": "Anahit", "email": "anahit@example.com"})
 
-    response = client.post("/users", json={"name": "Impostor", "email": "ada@example.com"})
+    response = client.post("/users", json={"name": "Impostor", "email": "anahit@example.com"})
 
     assert response.status_code == 409
 
@@ -31,7 +31,7 @@ def test_list_users_pagination(client: TestClient) -> None:
 
 
 def test_delete_user_cascades_projects(client: TestClient) -> None:
-    user = client.post("/users", json={"name": "Ada", "email": "ada@example.com"}).json()
+    user = client.post("/users", json={"name": "Anahit", "email": "anahit@example.com"}).json()
     first = client.post("/projects", json={"name": "First", "owner_id": user["id"]}).json()
     second = client.post("/projects", json={"name": "Second", "owner_id": user["id"]}).json()
 

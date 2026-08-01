@@ -63,6 +63,78 @@ owns and is not paginated, since the brief asks for all of them.
 
 All 422 responses come from Pydantic. None of them needed custom handling.
 
+## Trying it out
+
+The database starts empty, so there are no preloaded users.
+
+### Optional: load sample data
+
+```bash
+docker-compose exec api python seed.py
+```
+
+This inserts two users and two projects, so there is something to look at without typing
+anything first. It prints what it created:
+
+```
+user 1: Anahit Sargsyan <anahit@example.com>
+user 2: Narek Petrosyan <narek@example.com>
+project 1: Billing Service (owner 1)
+project 2: Internal Dashboard (owner 1)
+```
+
+Running it twice does nothing. It prints `Database already contains users. Nothing inserted.`
+and stops.
+
+The rows are temporary sample data for reviewing the API, standing in until there is real
+data. Nothing in the application reads them or depends on them, and deleting them, or the
+volume, changes nothing about how the service behaves. The seed produces exactly the state
+that steps 1, 2, 5 and 6 below would produce by hand, so you can seed and then start at step
+3.
+
+### Manual walkthrough
+
+The sequence below covers every endpoint and every error case in a few minutes. Paste the
+bodies into Swagger UI at <http://localhost:8000/docs>, or use the curl equivalents.
+
+On a fresh database the ids come out as written here, since the sequences start at 1.
+
+1. `POST /users` with `{"name": "Anahit Sargsyan", "email": "anahit@example.com"}` returns 201 and
+   user id 1.
+2. `POST /users` with `{"name": "Narek Petrosyan", "email": "narek@example.com"}` returns 201
+   and user id 2.
+3. `POST /users` with `anahit@example.com` again returns 409.
+4. `POST /users` with `{"name": "Anahit", "email": "not-an-email"}` returns 422.
+5. `POST /projects` with
+   `{"name": "Billing Service", "description": "A general purpose machine", "owner_id": 1}`
+   returns 201 and project id 1.
+6. `POST /projects` with `{"name": "Internal Dashboard", "owner_id": 1}` returns 201 and project id 2,
+   with `description` set to null.
+7. `POST /projects` with `{"name": "Orphan", "owner_id": 999}` returns 404, because the
+   owner does not exist.
+8. `GET /users?limit=1&offset=1` returns only Narek, which shows the pagination window
+   moving.
+9. `GET /users/1/projects` returns both of Anahit's projects.
+10. `GET /users/999/projects` returns 404 rather than an empty list.
+11. `DELETE /users/1` returns 204.
+12. `GET /projects/1` and `GET /projects/2` now return 404. Deleting Anahit removed her
+    projects through the database cascade.
+13. `GET /users/2` still returns Narek, and `GET /users` shows her alone.
+
+The same walkthrough as curl, for the first few steps:
+
+```bash
+curl -X POST localhost:8000/users \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Anahit Sargsyan", "email": "anahit@example.com"}'
+
+curl -X POST localhost:8000/projects \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Billing Service", "owner_id": 1}'
+
+curl localhost:8000/users/1/projects
+```
+
 ## Architectural decisions
 
 ### SQLAlchemy with separate Pydantic schemas, not SQLModel
@@ -166,6 +238,7 @@ tests/
 ├── conftest.py
 ├── test_users.py
 └── test_projects.py
+seed.py                # optional sample rows, not used by the application
 Dockerfile
 docker-compose.yml
 requirements.txt
