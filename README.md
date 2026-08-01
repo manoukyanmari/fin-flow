@@ -215,10 +215,36 @@ It is declared at both levels:
 
 ## Tests
 
-There are six tests. They cover the behaviour most likely to be wrong rather than every
-success path: user creation, a duplicate email returning 409, pagination windows, project
-creation, project creation against a nonexistent owner returning 404, and a user deletion
-cascading to their projects.
+Thirteen tests. Each one is here because something specific would break silently without it,
+rather than to cover every success path.
+
+* **User creation, and a duplicate email returning 409.** The second is the one that earns
+  its place: it proves uniqueness is actually enforced rather than assumed.
+* **Emails are stored lowercase.** `create_user` lowercases the address before saving. Remove
+  that line and every other test still passes, but the unique constraint compares bytes, so
+  `ANAHIT@Example.COM` and `anahit@example.com` would become two accounts for one person.
+  This test is what keeps uniqueness case insensitive.
+* **422 on an invalid email, a blank name, and a project with no owner.** These hold the
+  Pydantic constraints in place. Drop `min_length=1` and a user with an empty name would be
+  created without complaint. The third also separates two failures worth distinguishing: 422
+  means `owner_id` was missing, 404 means it was supplied but pointed at nobody.
+* **Pagination returns the correct window, in order.** The ordering assertion is deliberate.
+  `OFFSET` and `LIMIT` without an `ORDER BY` have no guaranteed row order in PostgreSQL, so
+  pages could repeat one row and skip another. Comparing an exact ordered list is what
+  catches that.
+* **Project creation, and creation against an owner who does not exist returning 404.**
+  Confirms ownership is validated before insert rather than left to the foreign key.
+* **Listing a user's projects, in three parts.** Only that user's projects come back, a
+  missing user returns 404, and a user who exists with nothing returns an empty list. The
+  three matter together rather than separately: with only the first two, an implementation
+  that returned 404 whenever the query found no rows would still pass, and a new user who had
+  simply not created anything would be told they do not exist.
+* **Deleting a user removes every project they own.** The failure this guards against is
+  quiet. Without `passive_deletes=True`, SQLAlchemy would load the child rows and try to null
+  a `NOT NULL` foreign key instead of letting the database cascade.
+
+Between them every status code in the table above is asserted: 200, 201, 204, 404, 409 and
+422, and every endpoint has at least one test.
 
 ```bash
 docker-compose up -d db
@@ -291,3 +317,14 @@ Alembic in place of `create_all()`, pinned versions in a lock file, and structur
 with request ids. After that, an index review once real query patterns exist, and
 authentication, which the brief did not ask for and which would change the shape of almost
 every endpoint here.
+
+## A note on tooling
+
+I used Claude Opus while building this, mostly to pressure test the architectural decisions
+described above. Whether SQLModel was worth the coupling, how much structure two entities
+actually justify, where the delete cascade belongs, and which dependencies to leave out were
+all worked through that way before anything was written. It was also useful for the quieter
+failure modes, such as the missing `ORDER BY` on the paginated query and the interaction
+between `passive_deletes` and a `NOT NULL` foreign key.
+
+The decisions here are mine and I am happy to walk through the reasoning behind any of them.
