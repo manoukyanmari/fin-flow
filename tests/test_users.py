@@ -73,3 +73,18 @@ def test_list_projects_for_missing_user_returns_404(client: TestClient) -> None:
     response = client.get("/users/999999/projects")
 
     assert response.status_code == 404
+
+
+def test_user_with_no_projects_returns_empty_list(client: TestClient) -> None:
+    # The other half of the 404 test above. On their own neither proves much,
+    # but together they pin down the difference between a user who does not
+    # exist and a user who exists and simply has not created anything yet.
+    # Without this test, an implementation that returned 404 whenever the query
+    # came back empty would still pass everything else, and a brand new user
+    # would be told they do not exist.
+    user = client.post("/users", json={"name": "Anahit", "email": "anahit@example.com"}).json()
+
+    response = client.get(f"/users/{user['id']}/projects")
+
+    assert response.status_code == 200
+    assert response.json() == []
